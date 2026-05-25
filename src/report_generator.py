@@ -1,0 +1,374 @@
+"""
+QA HTML Report Generator
+=========================
+Generates a professional HTML report from QA validation results.
+Saved to reports/qa_report_YYYYMMDD_HHMMSS.html
+
+Author : Satish Panchumarthy
+GitHub : github.com/panchumarthy
+"""
+
+import json
+import os
+from datetime import datetime
+
+
+def generate_html_report(report_data: dict, output_dir: str = "reports") -> str:
+    """Generate a styled HTML QA report and return the file path."""
+
+    os.makedirs(output_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{output_dir}/qa_report_{timestamp}.html"
+
+    checks = report_data.get("checks", {})
+    overall = report_data.get("overall_status", "UNKNOWN")
+    is_pass = "PASSED" in str(overall)
+
+    def status_badge(status):
+        s = str(status).upper()
+        if "PASS" in s:
+            return '<span class="badge pass">✅ PASS</span>'
+        elif "FAIL" in s:
+            return '<span class="badge fail">❌ FAIL</span>'
+        return f'<span class="badge unknown">{status}</span>'
+
+    def check_rows(checks_dict):
+        rows = ""
+        # Filter to only dict values (skip any non-dict entries)
+        checks_dict = {k: v for k, v in checks_dict.items() if isinstance(v, dict)}
+        labels = {
+            "row_count":             ("Row Count Check",           "Source vs target record count comparison"),
+            "reconciliation":        ("Source→Target Reconciliation","LEFT ANTI JOIN — records in source missing from target"),
+            "duplicates_in_target":  ("Duplicate Detection",        "Duplicate records in target table"),
+            "null_key_check":        ("NULL Key Check",             "NULL values in primary join key column"),
+        }
+        for key, detail in checks_dict.items():
+            label, desc = labels.get(key, (key.replace("_", " ").title(), ""))
+            status = detail.get("status", "UNKNOWN")
+            badge = status_badge(status)
+
+            # Build detail cells
+            extra = ""
+            if key == "row_count":
+                extra = f"""
+                <div class="detail-grid">
+                  <div class="detail-cell"><span class="label">Source</span><span class="value">{detail.get('source', 0):,}</span></div>
+                  <div class="detail-cell"><span class="label">Target</span><span class="value">{detail.get('target', 0):,}</span></div>
+                  <div class="detail-cell"><span class="label">Difference</span>
+                    <span class="value {'red' if detail.get('difference',0) != 0 else 'green'}">{detail.get('difference', 0):,}</span>
+                  </div>
+                </div>"""
+            elif key == "reconciliation":
+                missing = detail.get("missing_records", 0)
+                extra = f"""
+                <div class="detail-grid">
+                  <div class="detail-cell"><span class="label">Missing Records</span>
+                    <span class="value {'red' if missing > 0 else 'green'}">{missing:,}</span>
+                  </div>
+                </div>"""
+            elif key == "duplicates_in_target":
+                dupes = detail.get("duplicate_groups", 0)
+                extra = f"""
+                <div class="detail-grid">
+                  <div class="detail-cell"><span class="label">Duplicate Groups</span>
+                    <span class="value {'red' if dupes > 0 else 'green'}">{dupes:,}</span>
+                  </div>
+                </div>"""
+            elif key == "null_key_check":
+                nulls = detail.get("null_key_count", 0)
+                extra = f"""
+                <div class="detail-grid">
+                  <div class="detail-cell"><span class="label">NULL Keys</span>
+                    <span class="value {'red' if nulls > 0 else 'green'}">{nulls:,}</span>
+                  </div>
+                </div>"""
+
+            rows += f"""
+            <tr>
+              <td><strong>{label}</strong><br><small class="desc">{desc}</small></td>
+              <td>{badge}</td>
+              <td>{extra}</td>
+            </tr>"""
+        return rows
+
+    passed = sum(1 for v in checks.values() if isinstance(v, dict) and "PASS" in str(v.get("status", "")))
+    failed = sum(1 for v in checks.values() if isinstance(v, dict) and "FAIL" in str(v.get("status", "")))
+    overall_color = "#16a34a" if is_pass else "#dc2626"
+    overall_bg    = "#f0fdf4" if is_pass else "#fef2f2"
+    overall_icon  = "✅" if is_pass else "❌"
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ETL QA Validation Report — {datetime.now().strftime('%Y-%m-%d %H:%M')}</title>
+  <style>
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f1f5f9;
+      color: #1e293b;
+      padding: 32px 24px;
+    }}
+
+    /* ── Header ── */
+    .header {{
+      background: linear-gradient(135deg, #1e3a5f 0%, #2e75b6 100%);
+      color: white;
+      padding: 32px 40px;
+      border-radius: 12px;
+      margin-bottom: 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }}
+    .header h1 {{ font-size: 24px; font-weight: 700; margin-bottom: 4px; }}
+    .header .sub {{ font-size: 14px; opacity: 0.8; }}
+    .header .meta {{ text-align: right; font-size: 13px; opacity: 0.85; line-height: 1.8; }}
+
+    /* ── Overall Status Banner ── */
+    .overall-banner {{
+      background: {overall_bg};
+      border: 2px solid {overall_color};
+      border-radius: 10px;
+      padding: 20px 32px;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }}
+    .overall-banner .icon {{ font-size: 40px; }}
+    .overall-banner .status-text h2 {{
+      font-size: 22px;
+      color: {overall_color};
+      font-weight: 700;
+    }}
+    .overall-banner .status-text p {{ color: #475569; margin-top: 4px; font-size: 14px; }}
+
+    /* ── Summary Cards ── */
+    .cards {{
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }}
+    .card {{
+      background: white;
+      border-radius: 10px;
+      padding: 20px 24px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+      text-align: center;
+    }}
+    .card .card-value {{ font-size: 36px; font-weight: 700; }}
+    .card .card-label {{ font-size: 13px; color: #64748b; margin-top: 4px; }}
+    .card.green .card-value {{ color: #16a34a; }}
+    .card.red   .card-value {{ color: #dc2626; }}
+    .card.blue  .card-value {{ color: #2563eb; }}
+    .card.gray  .card-value {{ color: #475569; }}
+
+    /* ── Section ── */
+    .section {{
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+      margin-bottom: 24px;
+      overflow: hidden;
+    }}
+    .section-header {{
+      background: #1e3a5f;
+      color: white;
+      padding: 14px 24px;
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+    }}
+
+    /* ── Table ── */
+    table {{ width: 100%; border-collapse: collapse; }}
+    th {{
+      background: #f8fafc;
+      padding: 12px 20px;
+      text-align: left;
+      font-size: 13px;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border-bottom: 1px solid #e2e8f0;
+    }}
+    td {{
+      padding: 16px 20px;
+      border-bottom: 1px solid #f1f5f9;
+      vertical-align: top;
+      font-size: 14px;
+    }}
+    tr:last-child td {{ border-bottom: none; }}
+    tr:hover td {{ background: #fafbfc; }}
+    .desc {{ color: #94a3b8; font-size: 12px; }}
+
+    /* ── Badges ── */
+    .badge {{
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+    }}
+    .badge.pass   {{ background: #dcfce7; color: #15803d; }}
+    .badge.fail   {{ background: #fee2e2; color: #b91c1c; }}
+    .badge.unknown{{ background: #f1f5f9; color: #475569; }}
+
+    /* ── Detail Grid ── */
+    .detail-grid {{
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }}
+    .detail-cell {{
+      display: flex;
+      flex-direction: column;
+      background: #f8fafc;
+      border-radius: 6px;
+      padding: 8px 14px;
+      min-width: 100px;
+    }}
+    .detail-cell .label {{ font-size: 11px; color: #94a3b8; text-transform: uppercase; }}
+    .detail-cell .value {{ font-size: 18px; font-weight: 700; color: #1e293b; }}
+    .detail-cell .value.red   {{ color: #dc2626; }}
+    .detail-cell .value.green {{ color: #16a34a; }}
+
+    /* ── Pipeline Info ── */
+    .info-grid {{
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+    }}
+    .info-item {{
+      padding: 16px 24px;
+      border-bottom: 1px solid #f1f5f9;
+    }}
+    .info-item:nth-child(odd) {{ border-right: 1px solid #f1f5f9; }}
+    .info-item .key {{ font-size: 12px; color: #94a3b8; text-transform: uppercase; margin-bottom: 4px; }}
+    .info-item .val {{ font-size: 14px; font-weight: 600; color: #1e293b; font-family: monospace; }}
+
+    /* ── Footer ── */
+    .footer {{
+      text-align: center;
+      color: #94a3b8;
+      font-size: 12px;
+      margin-top: 32px;
+      padding-top: 16px;
+      border-top: 1px solid #e2e8f0;
+    }}
+    .footer a {{ color: #2e75b6; text-decoration: none; }}
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <div>
+      <h1>ETL QA Validation Report</h1>
+      <div class="sub">MCP-Based Data Quality Automation · github.com/panchumarthy</div>
+    </div>
+    <div class="meta">
+      <div>🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>
+      <div>👤 Satish Panchumarthy</div>
+      <div>🔧 Claude AI · MCP · SQL Server</div>
+    </div>
+  </div>
+
+  <!-- Overall Status Banner -->
+  <div class="overall-banner">
+    <div class="icon">{overall_icon}</div>
+    <div class="status-text">
+      <h2>Pipeline Status: {'ALL CHECKS PASSED' if is_pass else 'VALIDATION FAILED'}</h2>
+      <p>{report_data.get('summary', '')}</p>
+    </div>
+  </div>
+
+  <!-- Summary Cards -->
+    <div class="cards">
+    <div class="card blue">
+      <div class="card-value">{len([v for v in checks.values() if isinstance(v, dict)])}</div>
+      <div class="card-label">Total Checks</div>
+    </div>
+    <div class="card green">
+      <div class="card-value">{passed}</div>
+      <div class="card-label">Passed</div>
+    </div>
+    <div class="card {'red' if failed > 0 else 'green'}">
+      <div class="card-value">{failed}</div>
+      <div class="card-label">Failed</div>
+    </div>
+    <div class="card gray">
+      <div class="card-value">{checks.get('row_count', {}).get('source', 0) if isinstance(checks.get('row_count'), dict) else 0:,}</div>
+      <div class="card-label">Source Records</div>
+    </div>
+  </div>
+
+  <!-- Pipeline Info -->
+  <div class="section">
+    <div class="section-header">📋 Pipeline Details</div>
+    <div class="info-grid">
+      <div class="info-item"><div class="key">Source Table</div><div class="val">{report_data.get('source_table', 'N/A')}</div></div>
+      <div class="info-item"><div class="key">Target Table</div><div class="val">{report_data.get('target_table', 'N/A')}</div></div>
+      <div class="info-item"><div class="key">Generated At</div><div class="val">{report_data.get('generated_at', 'N/A')}</div></div>
+      <div class="info-item"><div class="key">Overall Status</div><div class="val">{overall}</div></div>
+    </div>
+  </div>
+
+  <!-- Check Results -->
+  <div class="section">
+    <div class="section-header">🔍 Validation Check Results</div>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:40%">Check</th>
+          <th style="width:15%">Status</th>
+          <th>Details</th>
+        </tr>
+      </thead>
+      <tbody>
+        {check_rows(checks)}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Raw JSON (collapsible) -->
+  <div class="section">
+    <div class="section-header" style="cursor:pointer" onclick="toggleRaw()">
+      📄 Raw JSON Report <span id="toggle-icon">▼ expand</span>
+    </div>
+    <div id="raw-json" style="display:none; padding:20px;">
+      <pre style="background:#f8fafc;padding:16px;border-radius:8px;font-size:12px;
+                  overflow:auto;max-height:400px;border:1px solid #e2e8f0;">{json.dumps(report_data, indent=2, default=str)}</pre>
+    </div>
+  </div>
+
+  <div class="footer">
+    Generated by <strong>MCP ETL QA Validation Tool</strong> ·
+    <a href="https://github.com/panchumarthy">github.com/panchumarthy</a> ·
+    Powered by Claude AI + Model Context Protocol
+  </div>
+
+  <script>
+    function toggleRaw() {{
+      const el = document.getElementById('raw-json');
+      const icon = document.getElementById('toggle-icon');
+      if (el.style.display === 'none') {{
+        el.style.display = 'block'; icon.textContent = '▲ collapse';
+      }} else {{
+        el.style.display = 'none'; icon.textContent = '▼ expand';
+      }}
+    }}
+  </script>
+</body>
+</html>"""
+
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write(html)
+
+    return filename
