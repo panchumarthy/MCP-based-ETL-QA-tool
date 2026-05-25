@@ -1,47 +1,120 @@
 # MCP-Based ETL QA Validation Tool
 
-**Author:** Satish Panchumarthy  
-**GitHub:** [github.com/panchumarthy](https://github.com/panchumarthy)  
-**Stack:** Python · MCP (Model Context Protocol) · Claude AI · Microsoft SQL Server
+> AI-powered ETL data quality validation agent — plain English in, professional QA report out.
+
+**Author:** Satish Panchumarthy · [github.com/panchumarthy](https://github.com/panchumarthy)  
+**Stack:** Python · Claude AI (Anthropic) · MCP · Microsoft SQL Server · pyodbc
 
 ---
 
 ## What This Is
 
-An AI-powered ETL data quality validation agent built on Anthropic's
-**Model Context Protocol (MCP)**. Instead of writing SQL validation scripts
-manually, you describe what you want to validate in plain English — Claude
-autonomously calls the right tools, queries SQL Server, analyzes results,
-and returns a structured QA report.
+An agentic QA validation tool built on Anthropic's **Model Context Protocol (MCP)**.  
+You describe what you want to validate in plain English. Claude autonomously calls the right SQL Server validation tools, analyzes the results, and generates a professional HTML report — no SQL writing required.
 
 ```
-You: "Validate today's securities pipeline run"
-         ↓
-   Claude Agent (Anthropic API)
-         ↓  (MCP protocol)
-   QA MCP Server (Python)
-         ↓
-   SQL Server (local)
-         ↓
-   Full QA Report: row counts, missing records,
-   duplicates, nulls — all in one response
+You:  "Validate today's securities pipeline run"
+          ↓
+    Claude Agent (Anthropic API)
+          ↓  MCP protocol (stdio)
+    QA MCP Server (Python)
+          ↓  pyodbc
+    SQL Server — ETL_QA_Demo
+          ↓
+    HTML Report (auto-opens in browser)
 ```
 
 ---
 
-## QA Tools Exposed via MCP
+## Architecture
 
-| Tool | What It Does |
-|---|---|
-| `list_tables` | Discover available tables |
-| `get_table_schema` | Inspect columns, types, nullability |
-| `row_count_check` | Compare source vs target counts |
-| `null_check` | Find NULL values across columns |
-| `duplicate_check` | Find duplicate records by key |
-| `source_target_reconciliation` | LEFT ANTI JOIN — find dropped records |
-| `data_type_validation` | Validate numeric/date/length formats |
-| `referential_integrity_check` | Find orphaned foreign key records |
-| `generate_qa_report` | Full pipeline validation in one call |
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        qa_agent.py                              │
+│              Claude AI  ·  Anthropic API                        │
+│   Receives tool list → decides what to call → synthesizes report│
+└────────────────────────┬────────────────────────────────────────┘
+                         │  MCP stdio protocol
+┌────────────────────────▼────────────────────────────────────────┐
+│                     qa_mcp_server.py                            │
+│                   Python MCP Server                             │
+│  list_tables · row_count_check · null_check · duplicate_check   │
+│  source_target_reconciliation · referential_integrity_check     │
+│  get_table_schema · data_type_validation · generate_qa_report   │
+└────────────────────────┬────────────────────────────────────────┘
+                         │  pyodbc
+┌────────────────────────▼────────────────────────────────────────┐
+│               Microsoft SQL Server (local)                      │
+│    ETL_QA_Demo database                                         │
+│    securities_source  ·  securities_target                      │
+│    orders_source      ·  orders_target  ·  customers            │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+┌────────────────────────▼────────────────────────────────────────┐
+│                   report_generator.py                           │
+│    Styled HTML report → reports/qa_report_YYYYMMDD_HHMMSS.html  │
+│    Auto-opens in browser after every run                        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## QA Tools Available
+
+| Tool | What It Does | SQL Pattern |
+|---|---|---|
+| `list_tables` | Discover all tables in the database | `INFORMATION_SCHEMA.TABLES` |
+| `get_table_schema` | Column names, types, nullability | `INFORMATION_SCHEMA.COLUMNS` |
+| `row_count_check` | Compare source vs target counts | `SELECT COUNT(*)` on both |
+| `null_check` | Find NULLs across columns | `COUNT(*) WHERE col IS NULL` |
+| `duplicate_check` | Find duplicate records by key | `GROUP BY key HAVING COUNT > 1` |
+| `source_target_reconciliation` | Records in source missing from target | LEFT ANTI JOIN |
+| `data_type_validation` | Validate numeric / date / length formats | `TRY_CAST`, `LEN` checks |
+| `referential_integrity_check` | Orphaned foreign key records | LEFT JOIN parent WHERE NULL |
+| `generate_qa_report` | Full pipeline validation in one call | All checks combined |
+
+---
+
+## Screenshots
+
+### Terminal — Agent Running
+
+```
+╔══════════════════════════════════════════════════════════╗
+║        MCP-Based ETL QA Validation Agent                 ║
+║        Powered by Claude + SQL Server                    ║
+╚══════════════════════════════════════════════════════════╝
+✅ MCP QA Server connected
+
+> Run a full QA report on the securities pipeline
+
+🤖 Agent thinking...
+────────────────────────────────────────────────────────────
+🔧 Calling tool: list_tables
+🔧 Calling tool: get_table_schema
+   Args: { "table_name": "securities_source" }
+🔧 Calling tool: generate_qa_report
+   Args: { "source_table": "securities_source", "target_table": "securities_target" }
+   Result: ❌ FAILED: row_count, reconciliation, duplicates_in_target
+
+Overall Status: ❌ PIPELINE FAILED — 3 of 4 checks failed
+
+| Check             | Status  | Detail                                   |
+|-------------------|---------|------------------------------------------|
+| Row Count         | ❌ FAIL | Source: 50 · Target: 48 · Difference: 2 |
+| Reconciliation    | ❌ FAIL | 3 records missing from target            |
+| Duplicate Check   | ❌ FAIL | 1 duplicate group (trade_id 1001)        |
+| NULL Key Check    | ✅ PASS | No NULL trade_ids                        |
+
+📊 HTML Report saved → reports/qa_report_20260525_125308.html
+```
+
+### HTML Report Output
+
+> 📸 _Add screenshot after your first run:_  
+> 1. Run the agent and let the HTML report open in your browser  
+> 2. Take a screenshot and save it as `docs/screenshot_report.png`  
+> 3. Replace this section with: `![QA Report](docs/screenshot_report.png)`
 
 ---
 
@@ -50,79 +123,98 @@ You: "Validate today's securities pipeline run"
 ### Prerequisites
 
 - Python 3.10+
-- Microsoft SQL Server (local) with SSMS
-- ODBC Driver 17 for SQL Server
-- Anthropic API key
+- Microsoft SQL Server (local instance)
+- SQL Server Management Studio (SSMS)
+- [ODBC Driver 17 for SQL Server](https://learn.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server)
+- Anthropic API key → [console.anthropic.com](https://console.anthropic.com)
 
-### Step 1 — Install Python dependencies
+### Step 1 — Clone the repo
+
+```bash
+git clone https://github.com/panchumarthy/MCP-based-ETL-QA-tool.git
+cd MCP-based-ETL-QA-tool
+```
+
+### Step 2 — Create virtual environment
+
+```bash
+python -m venv venv
+
+# Windows Git Bash
+source venv/Scripts/activate
+
+# Mac / Linux
+source venv/bin/activate
+```
+
+### Step 3 — Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### Step 2 — Set up the demo database
+### Step 4 — Set up the demo database
 
-Open **SQL Server Management Studio (SSMS)**, connect to your local instance,
-open `scripts/setup_sqlserver.sql` and run it.
+Open **SSMS**, connect to your local SQL Server, open `scripts/setup_sqlserver.sql` and execute it.
 
-This creates the `ETL_QA_Demo` database with:
-- `securities_source` — 50 trades (Broadridge-style data)
-- `securities_target` — same data with **intentional defects**:
-  - 3 records dropped (trade IDs 1005, 1010, 1015)
-  - 1 duplicate record (trade ID 1001)
-  - 1 NULL broker_code (trade 1003)
-  - 1 wrong trade_amount (trade 1007)
-- `orders_source` / `orders_target` — second pipeline with 2 dropped records
-- `customers` — lookup table (with 1 orphaned FK in orders)
+This creates the `ETL_QA_Demo` database with realistic securities and orders pipeline data — including **intentional defects** so the tool has real problems to catch:
 
-### Step 3 — Set your Anthropic API key
+| Defect | Detail |
+|---|---|
+| 3 dropped records | Trade IDs 1005, 1010, 1015 missing from target ($388,690 in trade value) |
+| 1 duplicate load | Trade ID 1001 inserted twice into target |
+| 1 NULL column | `broker_code` NULL on trade 1003 |
+| 1 wrong amount | `trade_amount` incorrect on trade 1007 |
+| 2 dropped orders | Order IDs 5006, 5009 missing from orders_target |
+| 1 orphaned FK | Account ACC999 in orders_source has no match in customers table |
 
-**Windows:**
-```cmd
+### Step 5 — Set your Anthropic API key
+
+```bash
+# Git Bash / Mac / Linux
+export ANTHROPIC_API_KEY=your-api-key-here
+
+# Windows CMD
 set ANTHROPIC_API_KEY=your-api-key-here
 ```
 
-**Mac/Linux:**
-```bash
-export ANTHROPIC_API_KEY=your-api-key-here
-```
+### Step 6 — Update connection string (if needed)
 
-### Step 4 — Update the connection string (if needed)
-
-Edit `src/qa_agent.py` — find `DEFAULT_CONNECTION` near the top:
+Edit `src/qa_agent.py` and find `DEFAULT_CONNECTION`:
 
 ```python
 DEFAULT_CONNECTION = (
     "DRIVER={ODBC Driver 17 for SQL Server};"
-    "SERVER=localhost;"          # ← change if your server name is different
-    "DATABASE=ETL_QA_Demo;"
-    "Trusted_Connection=yes"     # ← Windows auth; or use UID=sa;PWD=... for SQL auth
+    "SERVER=localhost;"          # ← change to your server name if needed
+    "DATABASE=ETL_QA_Demo;"      #   e.g.  .\SQLEXPRESS  or  LAPTOP-NAME\SQLEXPRESS
+    "Trusted_Connection=yes"     # ← Windows Auth; or use UID=sa;PWD=... for SQL Auth
 )
+```
+
+To find your server name, check the login screen in SSMS.
+
+### Step 7 — Run
+
+```bash
+python src/qa_agent.py
 ```
 
 ---
 
-## Running the Agent
+## Demo Queries
 
-### Interactive mode (recommended for demo)
-
-```bash
-cd mcp-qa-tool
-python src/qa_agent.py
-```
-
-Then type natural language queries:
+Run these in order for a complete demo:
 
 ```
-> Validate today's pipeline run between securities_source and securities_target
-> Check for NULL values in the securities_target table
-> Find any duplicate trades in securities_target
-> Run a full QA report on the securities pipeline
-> Check referential integrity between orders_source and customers
 > List all available tables
+> Run a full QA report on the securities pipeline
+> Check for NULL values in securities_target
+> Find duplicate trades in securities_target
+> Check referential integrity between orders_source and customers
+> Run a full QA report on the orders pipeline
 ```
 
-### Single query mode
+**Single query mode (non-interactive):**
 
 ```bash
 python src/qa_agent.py --query "Run a full QA report on the securities pipeline"
@@ -130,81 +222,96 @@ python src/qa_agent.py --query "Run a full QA report on the securities pipeline"
 
 ---
 
-## Example Output
+## HTML Report
 
-```
-> Validate today's pipeline run between securities_source and securities_target
+Every run automatically saves a timestamped HTML report to `reports/` and opens it in your browser.
 
-🤖 Agent thinking...
-────────────────────────────────────────────────────
-🔧 Calling tool: generate_qa_report
-   Result: ❌ FAILED: row_count, reconciliation, duplicates_in_target
+Each report includes:
+- Overall pipeline status banner (green = PASS, red = FAIL)
+- Summary cards: total checks, passed, failed, source record count
+- Per-check results table with PASS / FAIL badges and detail metrics
+- Raw JSON section (collapsible) for automation and integration
 
-## ETL QA Validation Report — securities pipeline
-
-**Overall Status: ❌ PIPELINE FAILED**
-
-| Check | Status | Detail |
-|---|---|---|
-| Row Count | ❌ FAIL | Source: 50 · Target: 48 · Missing: 2 |
-| Reconciliation | ❌ FAIL | 3 records in source missing from target |
-| Duplicates in Target | ❌ FAIL | 1 duplicate group found (trade_id 1001) |
-| NULL Key Check | ✅ PASS | No NULL trade_ids |
-
-**Issues Found:**
-1. **Dropped Records**: Trades 1005, 1010, 1015 are in source but not in target
-2. **Duplicate Load**: Trade 1001 was loaded twice into target
-3. **Count Mismatch**: 2 net difference (3 dropped - 1 duplicate)
-
-**Recommended Next Steps:**
-- Investigate ETL filter logic for trades 1005/1010/1015
-- Check for duplicate detection logic in the load process
-- Review AUTOSYS job logs for any partial re-runs
-```
+Report naming: `reports/qa_report_YYYYMMDD_HHMMSS.html`
 
 ---
 
-## Architecture
+## Project Structure
 
 ```
-mcp-qa-tool/
+MCP-based-ETL-QA-tool/
 ├── src/
-│   ├── qa_mcp_server.py   # MCP server — exposes SQL tools to Claude
-│   └── qa_agent.py        # Claude agent — orchestrates tool calls
+│   ├── qa_mcp_server.py      # MCP server — 9 SQL validation tools exposed to Claude
+│   ├── qa_agent.py           # Claude agent — orchestrates tool calls, saves report
+│   └── report_generator.py  # Styled HTML report generator
 ├── scripts/
-│   └── setup_sqlserver.sql  # Demo database with intentional defects
+│   └── setup_sqlserver.sql  # Demo database setup with intentional defects seeded
+├── reports/                  # Auto-created — timestamped HTML reports saved here
+├── docs/                     # Screenshots and documentation assets
 ├── requirements.txt
 └── README.md
 ```
 
-**How MCP works here:**
-
-1. `qa_agent.py` starts `qa_mcp_server.py` as a subprocess
-2. They communicate over `stdio` using the MCP protocol
-3. Claude receives the list of available tools
-4. Claude decides which tools to call based on your query
-5. Tool calls go through MCP → Python → pyodbc → SQL Server
-6. Results return to Claude → Claude synthesizes the final report
-
 ---
 
-## Interview Talking Points
+## How the Agentic Loop Works
 
-> *"I built an MCP-based QA agent where Claude autonomously orchestrates
-> multiple database validation checks — row counts, LEFT ANTI JOINs for
-> dropped records, duplicate detection, and referential integrity — all
-> triggered by a plain English query. The MCP server exposes each check as
-> a discrete tool, and Claude decides which tools to call and in what order
-> based on the validation objective. This is the same reconciliation logic
-> I applied manually at Wells Fargo, but now driven by an AI agent."*
+```
+1. You type a plain English query
+         ↓
+2. qa_agent.py fetches tool list from MCP server
+         ↓
+3. Tool list + query sent to Claude via Anthropic API
+         ↓
+4. Claude decides which tools to call and with what arguments
+         ↓
+5. qa_mcp_server.py executes SQL against SQL Server via pyodbc
+         ↓
+6. Results return to Claude as tool_result messages
+         ↓
+7. Claude reasons about results → calls more tools or writes final report
+         ↓
+8. report_generator.py creates HTML report → auto-opens in browser
+```
 
 ---
 
 ## Skills Demonstrated
 
-- **MCP (Model Context Protocol)** — tool server design and client integration
-- **Agentic AI** — Claude orchestrating multi-step validation autonomously  
-- **ETL Data Quality** — real reconciliation patterns (count checks, anti joins, null checks)
-- **Python** — async MCP server, pyodbc, Anthropic SDK
-- **SQL Server** — schema design, complex queries, window functions
-- **Data Engineering** — source-to-target validation methodology
+| Skill | Evidence |
+|---|---|
+| MCP (Model Context Protocol) | Full MCP server with 9 tools built from scratch |
+| Agentic AI | Claude autonomously orchestrates multi-step validation |
+| ETL Data Quality | Production patterns: count checks, anti-joins, null checks, referential integrity |
+| Python | Async MCP server, pyodbc, Anthropic SDK, HTML generation |
+| SQL Server | Schema design, complex queries, INFORMATION_SCHEMA, TRY_CAST |
+| Data Engineering | Source-to-target validation methodology from 13 years in financial services |
+
+---
+
+## Troubleshooting
+
+| Error | Fix |
+|---|---|
+| `src refspec main does not match` | Run `git branch -m master main` then push again |
+| `Repository not found` | Create the repo on github.com/new first (empty, no README) |
+| `set` not working in Git Bash | Use `export` instead of `set` |
+| `%ANTHROPIC_API_KEY%` prints literally | You are in Git Bash — use `echo $ANTHROPIC_API_KEY` |
+| SQL Server connection fails | Check `SERVER=` value — try `.\SQLEXPRESS` or `LAPTOP-NAME\SQLEXPRESS` |
+| `unhashable type: dict` error | Replace `qa_agent.py` and `report_generator.py` with latest versions |
+
+---
+
+## Interview Talking Point
+
+> *"I built an MCP-based QA agent where Claude autonomously orchestrates multiple database validation checks — row counts, LEFT ANTI JOINs for dropped records, duplicate detection, and referential integrity — all triggered by a plain English query. The MCP server exposes each check as a discrete tool, and Claude decides which tools to call and in what order. This is the same reconciliation logic I applied manually at Wells Fargo Securities for 13 years, now driven by an AI agent."*
+
+---
+
+## License
+
+MIT — free to use, modify, and share.
+
+---
+
+*Built with Claude AI · Anthropic MCP · Microsoft SQL Server*
