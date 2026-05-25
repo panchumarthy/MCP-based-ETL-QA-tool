@@ -110,6 +110,7 @@ Overall Status: ❌ PIPELINE FAILED — 3 of 4 checks failed
 ```
 
 ### HTML Report Output
+![QA Report](docs/screenshot_report.png)
 
 > 📸 _Add screenshot after your first run:_  
 > 1. Run the agent and let the HTML report open in your browser  
